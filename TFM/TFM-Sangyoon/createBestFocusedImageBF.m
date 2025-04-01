@@ -1,147 +1,112 @@
-function MO = createBestFocusedImageBF(pathToNDFile,iChan)
-%function MO = createBestFocusedImageBF(pathToNDFile,iChan) accepts
-%pathToNDFile, import it using bfImport, find the best focused-image using
-%function findBestFocusFromStack, and produce MovieObject MO that has
-%channels with only best-focused images.
-% input
-%   pathToNDFile        a character path toward a nd file
-%   iChan               the channel number for Bead channel
-% output
-%   MO                  movieData or movieList  with channels with the
-%                       focused images
-%   Sangyoon Han, Nov 2021
-% e.g.: MO = createBestFocusedImageBF
-%% Read the nd file
-% if it is not entered as an input argument, ask the user.
-if nargin<1
-    [fileSFolders, pathSFolder] = uigetfile('*.nd','Select a nd file.');
-    pathToNDFile = [pathSFolder filesep fileSFolders];
-else
-    [pathSFolder,name,ext] = fileparts(pathToNDFile);
-%     fileSFolders=[name ext];
-end
-MD = bfImport(pathToNDFile);
+function MO = createBestFocusedImageBF(pathToOMEFile, seriesIndex, zRange, iChan)
+% Function to process OME-TIFF files, select position (series), Z-stack,
+% and create MovieObject MO with best-focused images.
 
-if nargin<2
-    nChan = numel(MD(1).channels_);
-    if nChan >1
-        % Show each channgel
-        hf = figure;
-        for ii=1:nChan
-            subplot(1,nChan,ii)
-            imshow(MD(1).channels_(ii).loadImage(1),[])
-            title(['Channel ' num2str(ii)])
-        end
-        % Ask user for channel index
-        iChan = input('Enter bead channel number (default: the final one): ');
+% Prompt user to select file if path not provided
+if nargin < 1
+    [file, path] = uigetfile('*.ome.tif', 'Select an OME-TIFF file.');
+    pathToOMEFile = fullfile(path, file);
+end
+
+% Load the OME-TIFF file using Bio-Formats
+MD = bfImport(pathToOMEFile);
+
+% Validate seriesIndex
+if nargin < 2 || isempty(seriesIndex)
+    numSeries = numel(MD);
+    fprintf('File contains %d series (positions).\n', numSeries);
+    seriesIndex = input('Enter the series (position) index to process (default: all): ');
+    if isempty(seriesIndex)
+        seriesIndex = 1:numSeries;
+    end
+end
+
+% Validate Z-range
+if nargin < 3 || isempty(zRange)
+    fprintf('Enter Z-range (start and end Z-slices).\n');
+    zStart = input('Start Z-slice: ');
+    zEnd = input('End Z-slice: ');
+    zRange = zStart:zEnd;
+end
+
+% Loop through selected series
+MO_list = cell(numel(seriesIndex), 1);
+for sIdx = 1:numel(seriesIndex)
+    curMD = MD(seriesIndex(sIdx));
+    nFrames = curMD.nFrames_;
+    nChan = numel(curMD.channels_);
+    curPath = fullfile(curMD.outputDirectory_, sprintf('Series_%d', seriesIndex(sIdx)));
+    mkdir(curPath);
+
+    % Validate Z-range
+    if max(zRange) > curMD.zSize_
+        error('Specified zRange exceeds available Z-stack slices for series %d.', seriesIndex(sIdx));
+    end
+
+    % Select channel if not provided
+    if nargin < 4 || isempty(iChan)
+        fprintf('This series contains %d channels.\n', nChan);
+        iChan = input('Enter bead channel number (default: final channel): ');
         if isempty(iChan)
-            iChan = numel(refMD.channels_);
+            iChan = nChan;
         end
-        close(hf)
-    elseif nChan==1
-        iChan=1;
     end
-end
-% Going over each movie
-nMovies = numel(MD);
-applySobel = true;
-for jj=1:nMovies
-    curMD = MD(jj);
-    % 
-    if curMD.zSize_>1
-        curBeadChan = curMD.channels_(iChan);
-        % store it somewhere
-        curPath = curMD.outputDirectory_;
-        % Make the channel folder
-        curNChan = numel(curMD.channels_);
-        curChanAll = cell(curNChan,1);
-        for kk=1:curNChan
-            curChanPath = [curPath filesep 'Chan' num2str(kk)];
-            curChanAll{kk} = curChanPath;
-            mkdir(curChanPath)
-        end
-        thresVariance=0.8;
-        numFrames = curMD.nFrames_;
-        for ii=1:numFrames
-            % find the best focus
-            curBeadStack = curBeadChan.loadStack(ii);
-            averagingRange = findBestFocusFromStack(curBeadStack,thresVariance,applySobel);
-            %curBestImage = curBeadStack(:,:,median(averagingRange));
-            %figure, imshow(curBestImage,[])
-            for kk=1:curNChan
-                if kk==iChan
-                    curBeadStackChosen = curBeadStack(:,:,averagingRange);
-                    curBestImage = mean(curBeadStackChosen,3); 
-                else
-                    curChan = curMD.channels_(kk);
-                    curStack = curChan.loadStack(ii);
-                    curStackChosen = curStack(:,:,averagingRange);
-                    curBestImage = mean(curStackChosen,3); 
-                end
-                meanImgPath = [curChanAll{kk} filesep 'img' num2str(ii) '.tif'];
-                imwrite(uint16(curBestImage),meanImgPath,'Compression','none')
-            end
-        end
-        % Registering it to a new MD file
-        %channel(curNChan) = Channel();
-        for kk=1:curNChan
-            curChan = curMD.channels_(kk);
-            channel(kk) = Channel(curChanAll{kk});
-            try
-                channel(kk).fluorophore_=curChan.name_;
-                channel(kk).emissionWavelength_=name2wavelength(curChan.name_)*1e9;
-                channel(kk).imageType_='Confocal'; % this should be changed later.
-            catch
-                disp(['Channel ' num2str(kk) ' is ' curChan.name_])
-            end
-        end
-        MDnew(jj) = MovieData(channel,curPath);
 
-        % Set the path where to store the MovieData object.
-        MDnew(jj).setPath(curPath);
-        MDnew(jj).setFilename('movieData.mat');
-
-        % Set some additional movie properties
-        MDnew(jj).numAperture_= curMD.numAperture_; %1.49;
-        if isempty(curMD.pixelSize_)
-            magObj = input('What is the objective magnification (e.g. 20)?: ');
-            MDnew(jj).pixelSize_= 6500/magObj;%71;
-        else
-            MDnew(jj).pixelSize_= curMD.pixelSize_;%71;
-        end
-        MDnew(jj).camBitdepth_=curMD.camBitdepth_;
-        if isempty(curMD.timeInterval_)
-            tInt = input('What is the time interval in seconds?: ');
-            MDnew(jj).timeInterval_= tInt;%71;
-        else
-            MDnew(jj).timeInterval_= curMD.timeInterval_;
-        end
-        MDnew(jj).notes_= 'Movie with only focused images '; 
-
-        % Run sanityCheck on MovieData. 
-        % Check image size and number of frames are consistent. 
-        % Save the movie if successfull
-        MDnew(jj).sanityCheck;
-    else
-        disp('This MD was not z-stack. You can use this directly after checking focused images')
+    % Validate channel number
+    if iChan > nChan || iChan < 1
+        error('Invalid channel number specified for series %d. Available channels: 1-%d.', seriesIndex(sIdx), nChan);
     end
+
+    % Initialize channel directories
+    channelDirs = cell(nChan, 1);
+    for c = 1:nChan
+        channelDirs{c} = fullfile(curPath, sprintf('Channel_%d', c));
+        mkdir(channelDirs{c});
+    end
+
+    % Process frames
+    for t = 1:nFrames
+        fprintf('Processing series %d, frame %d of %d.\n', seriesIndex(sIdx), t, nFrames);
+
+        % Process each channel
+        for c = 1:nChan
+            % Load stack and find best-focused image
+            curBeadStack = curMD.channels_(iChan).loadStack(t);
+            thresVariance = 0.8; % Default threshold for variance
+            applySobel = true;   % Use Sobel filter for focus detection
+            averagingRange = findBestFocusFromStack(curBeadStack, thresVariance, applySobel);
+
+            curStack = curMD.channels_(c).loadStack(t);
+            selectedStack = curStack(:, :, averagingRange);
+            focusedImage = mean(selectedStack, 3); % Calculate best-focused image
+
+            % Save the best-focused image in the channel folder
+            imwrite(uint16(focusedImage), ...
+                fullfile(channelDirs{c}, sprintf('img_t%03d.tif', t)), ...
+                'Compression', 'none');
+        end
+    end
+
+    % Create MovieData for the processed series
+    channels = arrayfun(@(c) Channel(channelDirs{c}), 1:nChan);
+    MO = MovieData(channels, curPath);
+    MO.setPath(curPath);
+    MO.setFilename('movieData.mat');
+    MO.sanityCheck();
+    MO.save();
+    MO_list{sIdx} = MO;
 end
-if nMovies==1
-    MO= MDnew;
+
+% Combine MovieData into MovieList if multiple series are processed
+if numel(seriesIndex) > 1
+    MO = MovieList([MO_list{:}], fileparts(curPath));
+    MO.setPath(fileparts(curPath));
+    MO.setFilename('movieList.mat');
+    MO.sanityCheck();
+    MO.save();
 else
-    MO = MovieList(MDnew,pathSFolder);
-    MO.movieListFileName_ = 'movieList.mat';
-    MO.sanityCheck;
-end
-%     if numel(averagingRange)>5
-%         applySobel=false;
-%         averagingRange = findBestFocusFromStack(curBeadStack,thresVariance,applySobel);
-%         if numel(averagingRange)>5
-%             averagingRange = findBestFocusFromStack(curBeadStack,thresVariance,applySobel,'amp');
-%         end
-%     end
-% else
-%     meanRefImg = curBeadChan.loadImage(1);
-% end
+    MO = MO_list{1};
 end
 
+fprintf('Processing complete. Best-focused images saved in structured folders.\n');
+end

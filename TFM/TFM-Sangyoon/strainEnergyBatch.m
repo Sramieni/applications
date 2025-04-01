@@ -513,13 +513,13 @@ if isCellSeg
         avgDispCell_CellArray = cellfun(@(x) cellfun(@mean,x),avgDisp_Cell_Group,'unif',false);
     end
     h1=figure; 
-    boxPlotCellArray(avgDispCell_CellArray,nameList,1,false,true)
+    boxPlotCellArray(avgDispCell_CellArray,nameList,1,false,true,'forceshowP',true)
     ylabel('Displacement, average (um)')
     title('Average displacement over cell')
     hgexport(h1,strcat(figPath,'/avgDispCell'),hgexport('factorystyle'),'Format','eps')
     hgsave(h1,strcat(figPath,'/avgDispCell'),'-v7.3')
     print(h1,strcat(figPath,'/avgDispCell.tif'),'-dtiff')
-
+ 
     tableAvgDispCell_CellArray=table(avgDispCell_CellArray,'RowNames',nameList);
     writetable(tableAvgDispCell_CellArray,strcat(dataPath,'/avgDispCell.csv'),'WriteRowNames',true)
 end
@@ -647,7 +647,7 @@ if isCellSeg
         avgForceCell_CellArray = cellfun(@(x) cellfun(@mean,x),avgForce_Cell_Group,'unif',false);
     end
     h1=figure; 
-    boxPlotCellArray(avgForceCell_CellArray,nameList,1,false,true)
+    boxPlotCellArray(avgForceCell_CellArray,nameList,1,false,true,'forceshowP',true)
     ylabel('Average traction (Pa)')
     title('Average traction in a cell')
     hgexport(h1,strcat(figPath,'/avgForceCell'),hgexport('factorystyle'),'Format','eps')
@@ -657,29 +657,46 @@ if isCellSeg
     tableAvgForce_Cell=table(avgForceCell_CellArray,'RowNames',nameList);
     writetable(tableAvgForce_Cell,strcat(dataPath,'/avgForce_Cell.csv'),'WriteRowNames',true)
 end
+
 %% Avg force - CellPeri
 if isCellSeg
     try
-        avgForceCellPeri_CellArray = cellfun(@(x) cell2mat(x'),avgForce_CellPeri_Group,'unif',false);
-        boxPlotCellArray(avgForceCellPeri_CellArray,nameList,1,false,true)
+        avgForceCellPeri_CellArray = cellfun(@(x) cell2mat(x'), avgForce_CellPeri_Group, 'unif', false);
+        boxPlotCellArray(avgForceCellPeri_CellArray, nameList, 1, false, true)
     catch
-        avgForceCellPeri_CellArray = cellfun(@(x) cell2mat(x),avgForce_CellPeri_Group,'unif',false);
+        avgForceCellPeri_CellArray = cellfun(@(x) cell2mat(x), avgForce_CellPeri_Group, 'unif', false);
     end
-    samNum=cellfun(@numel,avgForceCellPeri_CellArray);
-    if length(samNum)>1 && (samNum(1)>10*samNum(2) || samNum(2)>10*samNum(1))
-        avgForceCellPeri_CellArray = cellfun(@(x) cellfun(@mean,x),avgForce_CellPeri_Group,'unif',false);
+    samNum = cellfun(@numel, avgForceCellPeri_CellArray);
+    if length(samNum) > 1 && (samNum(1) > 10 * samNum(2) || samNum(2) > 10 * samNum(1))
+        avgForceCellPeri_CellArray = cellfun(@(x) cellfun(@mean, x), avgForce_CellPeri_Group, 'unif', false);
     end
-    h1=figure; 
-    boxPlotCellArray(avgForceCellPeri_CellArray,nameList,1,false,true)
+    
+    % Combine all data and group labels for ANOVA
+    allData = vertcat(avgForceCellPeri_CellArray{:});
+    groupLabels = arrayfun(@(i) repmat(nameList(i), samNum(i), 1), 1:length(nameList), 'UniformOutput', false);
+    groupLabels = vertcat(groupLabels{:});
+    
+    % Perform ANOVA
+    [p, tbl, stats] = anova1(allData, groupLabels, 'off'); % 'off' suppresses the plot
+    disp(['P-value from ANOVA: ', num2str(p)]);
+    
+    % Save p-value to a text file
+    pValueFile = fopen(strcat(dataPath, '/AvgForce_CellPeri_pvalue.txt'), 'w');
+    fprintf(pValueFile, 'P-value from ANOVA: %f\n', p);
+    fclose(pValueFile);
+    
+    h1 = figure; 
+    boxPlotCellArray(avgForceCellPeri_CellArray, nameList, 1, false, true)
     ylabel('Avg traction (Pa)')
     title('Average traction in a cell periphery')
-    hgexport(h1,strcat(figPath,'/avgForceCellPeri'),hgexport('factorystyle'),'Format','eps')
-    hgsave(h1,strcat(figPath,'/avgForceCellPeri'),'-v7.3')
-    print(h1,strcat(figPath,'/avgForceCellPeri.tif'),'-dtiff')
+    hgexport(h1, strcat(figPath, '/avgForceCellPeri'), hgexport('factorystyle'), 'Format', 'eps')
+    hgsave(h1, strcat(figPath, '/avgForceCellPeri'), '-v7.3')
+    print(h1, strcat(figPath, '/avgForceCellPeri.tif'), '-dtiff')
 
-    tableAvgForce_CellPeri=table(avgForceCellPeri_CellArray,'RowNames',nameList);
-    writetable(tableAvgForce_CellPeri,strcat(dataPath,'/AvgForce_CellPeri.csv'),'WriteRowNames',true)
+    tableAvgForce_CellPeri = table(avgForceCellPeri_CellArray, 'RowNames', nameList);
+    writetable(tableAvgForce_CellPeri, strcat(dataPath, '/AvgForce_CellPeri.csv'), 'WriteRowNames', true)
 end
+
 %% Average force - CellInside
 if isCellSeg
     try
